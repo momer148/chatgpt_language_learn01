@@ -1,0 +1,16 @@
+{
+  "name": "Study Pulse",
+  "short_name": "Study Pulse",
+  "description": "Daily language study planner with vocabulary, grammar, reading, listening, and reminders.",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#f5f3ef",
+  "theme_color": "#0f766e",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

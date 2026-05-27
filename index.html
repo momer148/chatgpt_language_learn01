@@ -1,0 +1,417 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#0f766e">
+    <title>Study Pulse</title>
+    <link rel="manifest" href="manifest.webmanifest">
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">
+            <span></span>
+            <span></span>
+            <span></span>
+          </div>
+          <div>
+            <h1>Study Pulse</h1>
+            <p>Daily language routine</p>
+          </div>
+        </div>
+
+        <nav class="nav-tabs" aria-label="Main sections">
+          <button class="nav-tab is-active" data-tab="dashboard" type="button">Today</button>
+          <button class="nav-tab" data-tab="planner" type="button">Planner</button>
+          <button class="nav-tab" data-tab="vocab" type="button">Vocab</button>
+          <button class="nav-tab" data-tab="grammar" type="button">Grammar</button>
+          <button class="nav-tab" data-tab="media" type="button">Reading & listening</button>
+          <button class="nav-tab" data-tab="settings" type="button">Settings</button>
+          <button class="nav-tab mobile-more-tab" id="mobile-more-trigger" type="button" aria-expanded="false" aria-controls="mobile-more-menu">More</button>
+        </nav>
+
+        <div class="mobile-more-menu" id="mobile-more-menu" hidden>
+          <button class="mobile-menu-item" data-jump="media" type="button">Reading & listening</button>
+          <button class="mobile-menu-item" data-jump="settings" type="button">Settings</button>
+          <button class="mobile-menu-item" id="mobile-enable-notifications" type="button">Enable reminders</button>
+        </div>
+
+        <div class="sidebar-footer">
+          <p id="notification-status">Notifications not enabled</p>
+          <button class="ghost-button" id="enable-notifications" type="button">Enable reminders</button>
+        </div>
+      </aside>
+
+      <main class="workspace">
+        <section class="topbar" aria-label="Overview">
+          <div>
+            <p class="eyebrow" id="today-date">Today</p>
+            <h2 id="daily-heading">Your study plan</h2>
+          </div>
+          <div class="quick-stats">
+            <div>
+              <strong id="stat-minutes">0</strong>
+              <span>minutes today</span>
+            </div>
+            <div>
+              <strong id="stat-done">0/0</strong>
+              <span>tasks done</span>
+            </div>
+            <div>
+              <strong id="stat-vocab">0</strong>
+              <span>words due</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel is-active" id="dashboard-panel" data-panel="dashboard">
+          <div class="dashboard-grid">
+            <section class="surface today-list">
+              <div class="section-head">
+                <div>
+                  <p class="eyebrow">Schedule</p>
+                  <h3>Today</h3>
+                </div>
+                <button class="secondary-button" data-jump="planner" type="button">Edit plan</button>
+              </div>
+              <div id="today-tasks" class="task-list"></div>
+            </section>
+
+            <section class="surface focus-card">
+              <div class="section-head">
+                <div>
+                  <p class="eyebrow">Next</p>
+                  <h3>Focus block</h3>
+                </div>
+              </div>
+              <div id="next-task" class="next-task"></div>
+              <div class="timer-box">
+                <span id="timer-label">No timer running</span>
+                <strong id="timer-display">00:00</strong>
+                <div class="button-row">
+                  <button class="primary-button" id="timer-start" type="button">Start</button>
+                  <button class="secondary-button" id="timer-stop" type="button">Stop</button>
+                </div>
+              </div>
+            </section>
+
+            <section class="surface review-card">
+              <div class="section-head">
+                <div>
+                  <p class="eyebrow">Vocab</p>
+                  <h3>Due review</h3>
+                </div>
+                <button class="secondary-button" data-jump="vocab" type="button">Open</button>
+              </div>
+              <div id="mini-review"></div>
+            </section>
+
+            <section class="surface progress-card">
+              <div class="section-head">
+                <div>
+                  <p class="eyebrow">Progress</p>
+                  <h3>This week</h3>
+                </div>
+              </div>
+              <div class="progress-bars" id="progress-bars"></div>
+            </section>
+          </div>
+        </section>
+
+        <section class="panel" id="planner-panel" data-panel="planner">
+          <div class="two-column">
+            <section class="surface">
+              <div class="section-head">
+                <div>
+                  <p class="eyebrow">Routine</p>
+                  <h3>Add a daily task</h3>
+                </div>
+              </div>
+              <form id="task-form" class="form-grid">
+                <label>
+                  Task name
+                  <input name="title" required placeholder="Vocab review">
+                </label>
+                <label>
+                  Area
+                  <select name="type">
+                    <option value="Vocabulary">Vocabulary</option>
+                    <option value="Grammar">Grammar</option>
+                    <option value="Reading">Reading</option>
+                    <option value="Listening">Listening</option>
+                    <option value="Writing">Writing</option>
+                    <option value="Speaking">Speaking</option>
+                  </select>
+                </label>
+                <label>
+                  Start time
+                  <input name="time" type="time" required value="09:00">
+                </label>
+                <label>
+                  Minutes
+                  <input name="duration" type="number" min="5" step="5" required value="60">
+                </label>
+                <label class="full-span">
+                  Notes
+                  <textarea name="notes" rows="3" placeholder="Example: Review 25 words, then add 5 new ones."></textarea>
+                </label>
+                <button class="primary-button full-span" type="submit">Add task</button>
+              </form>
+            </section>
+
+            <section class="surface">
+              <div class="section-head">
+                <div>
+                  <p class="eyebrow">Daily plan</p>
+                  <h3>Scheduled tasks</h3>
+                </div>
+              </div>
+              <div id="planner-list" class="task-list"></div>
+            </section>
+          </div>
+        </section>
+
+        <section class="panel" id="vocab-panel" data-panel="vocab">
+          <div class="two-column">
+            <section class="surface">
+              <div class="section-head">
+                <div>
+                  <p class="eyebrow">Bank</p>
+                  <h3>Add vocabulary</h3>
+                </div>
+              </div>
+              <form id="vocab-form" class="form-grid">
+                <label>
+                  Word
+                  <input name="word" required placeholder="die Entscheidung">
+                </label>
+                <label>
+                  Meaning
+                  <input name="meaning" required placeholder="decision">
+                </label>
+                <label class="full-span">
+                  Sentence
+                  <textarea name="sentence" rows="3" required placeholder="Ich habe eine wichtige Entscheidung getroffen."></textarea>
+                </label>
+                <label>
+                  Folder
+                  <input name="folder" list="vocab-folder-options" placeholder="Exam A1">
+                </label>
+                <label>
+                  Review from
+                  <input name="due" type="date">
+                </label>
+                <label class="full-span">
+                  Topic
+                  <input name="topic" placeholder="Work, travel, exam">
+                </label>
+                <button class="primary-button full-span" type="submit">Add word</button>
+              </form>
+              <datalist id="vocab-folder-options"></datalist>
+            </section>
+
+            <section class="surface">
+              <div class="section-head">
+                <div>
+                  <p class="eyebrow">Review</p>
+                  <h3>Flashcard</h3>
+                </div>
+              </div>
+              <div id="review-box" class="review-box"></div>
+            </section>
+          </div>
+
+          <section class="surface import-surface">
+            <div class="section-head">
+              <div>
+                <p class="eyebrow">Import</p>
+                <h3>Upload vocabulary</h3>
+              </div>
+              <label class="file-button">
+                Upload Excel
+                <input id="vocab-import" type="file" accept=".xlsx,.xls,.csv">
+              </label>
+            </div>
+            <div class="import-fields">
+              <span class="pill">word</span>
+              <span class="pill">meaning</span>
+              <span class="pill">sentence</span>
+              <span class="pill">folder</span>
+              <span class="pill">topic</span>
+              <span class="pill">due</span>
+            </div>
+          </section>
+
+          <section class="surface list-surface">
+            <div class="section-head">
+              <div>
+                <p class="eyebrow">Saved</p>
+                <h3>Vocabulary list</h3>
+              </div>
+              <div class="list-controls">
+                <select id="vocab-folder-filter" aria-label="Filter by folder"></select>
+                <input class="search-input" id="vocab-search" placeholder="Search words">
+              </div>
+            </div>
+            <div id="vocab-list" class="word-list"></div>
+          </section>
+        </section>
+
+        <section class="panel" id="flashcard-panel" data-panel="flashcards">
+          <section class="surface flashcard-screen">
+            <div class="section-head">
+              <div>
+                <p class="eyebrow" id="flashcard-folder-label">Review</p>
+                <h3>Flashcards</h3>
+              </div>
+              <button class="secondary-button" data-jump="vocab" type="button">Back to vocab</button>
+            </div>
+            <div id="flashcard-progress" class="flashcard-progress"></div>
+            <div id="flashcard-box" class="flashcard-box"></div>
+          </section>
+        </section>
+
+        <section class="panel" id="grammar-panel" data-panel="grammar">
+          <div class="two-column">
+            <section class="surface">
+              <div class="section-head">
+                <div>
+                  <p class="eyebrow">Book work</p>
+                  <h3>Add grammar drill</h3>
+                </div>
+              </div>
+              <form id="grammar-form" class="form-grid">
+                <label>
+                  Book
+                  <input name="book" required value="Grammatik Aktiv">
+                </label>
+                <label>
+                  Unit/topic
+                  <input name="unit" required placeholder="Unit 12: Konjunktiv II">
+                </label>
+                <label>
+                  Exercises
+                  <input name="exercises" placeholder="1-4">
+                </label>
+                <label>
+                  Due date
+                  <input name="due" type="date">
+                </label>
+                <label class="full-span">
+                  Notes
+                  <textarea name="notes" rows="3" placeholder="Repeat mistakes at the end."></textarea>
+                </label>
+                <button class="primary-button full-span" type="submit">Add drill</button>
+              </form>
+            </section>
+
+            <section class="surface">
+              <div class="section-head">
+                <div>
+                  <p class="eyebrow">Queue</p>
+                  <h3>Grammar drills</h3>
+                </div>
+              </div>
+              <div id="grammar-list" class="task-list"></div>
+            </section>
+          </div>
+        </section>
+
+        <section class="panel" id="media-panel" data-panel="media">
+          <div class="two-column">
+            <section class="surface">
+              <div class="section-head">
+                <div>
+                  <p class="eyebrow">Input</p>
+                  <h3>Log reading or listening</h3>
+                </div>
+              </div>
+              <form id="media-form" class="form-grid">
+                <label>
+                  Type
+                  <select name="type">
+                    <option value="Reading">Reading</option>
+                    <option value="Listening">Listening</option>
+                  </select>
+                </label>
+                <label>
+                  Minutes
+                  <input name="minutes" type="number" min="5" step="5" required value="30">
+                </label>
+                <label class="full-span">
+                  Title/source
+                  <input name="title" required placeholder="Article, podcast, video, book chapter">
+                </label>
+                <label class="full-span">
+                  Notes
+                  <textarea name="notes" rows="3" placeholder="New words, summary, useful phrases."></textarea>
+                </label>
+                <button class="primary-button full-span" type="submit">Save log</button>
+              </form>
+            </section>
+
+            <section class="surface">
+              <div class="section-head">
+                <div>
+                  <p class="eyebrow">History</p>
+                  <h3>Recent logs</h3>
+                </div>
+              </div>
+              <div id="media-list" class="log-list"></div>
+            </section>
+          </div>
+        </section>
+
+        <section class="panel" id="settings-panel" data-panel="settings">
+          <div class="two-column">
+            <section class="surface">
+              <div class="section-head">
+                <div>
+                  <p class="eyebrow">Reminders</p>
+                  <h3>Notifications</h3>
+                </div>
+              </div>
+              <p class="body-copy">
+                This version can remind you while the app is open. Install it as a browser app for the best local experience.
+              </p>
+              <div class="button-row">
+                <button class="primary-button" id="settings-enable-notifications" type="button">Enable reminders</button>
+                <button class="secondary-button" id="test-notification" type="button">Send test</button>
+              </div>
+            </section>
+
+            <section class="surface">
+              <div class="section-head">
+                <div>
+                  <p class="eyebrow">Data</p>
+                  <h3>Backup and restore</h3>
+                </div>
+              </div>
+              <div class="button-row">
+                <button class="secondary-button" id="export-data" type="button">Export data</button>
+                <label class="file-button">
+                  Import data
+                  <input id="import-data" type="file" accept="application/json">
+                </label>
+                <button class="danger-button" id="reset-data" type="button">Reset demo data</button>
+              </div>
+            </section>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <template id="empty-template">
+      <div class="empty-state">
+        <strong>Nothing here yet</strong>
+        <span>Add your first item to start tracking it.</span>
+      </div>
+    </template>
+
+    <script src="xlsx.full.min.js" defer></script>
+    <script src="app.js" defer></script>
+  </body>
+</html>
