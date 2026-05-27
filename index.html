@@ -176,14 +176,13 @@
 
         <section class="panel" id="vocab-panel" data-panel="vocab">
           <div class="two-column">
-            <section class="surface">
-              <div class="section-head">
-                <div>
-                  <p class="eyebrow">Bank</p>
-                  <h3>Add vocabulary</h3>
-                </div>
-              </div>
-              <form id="vocab-form" class="form-grid">
+            <section class="surface vocab-add-surface">
+              <button class="vocab-add-toggle" id="vocab-add-toggle" type="button" aria-expanded="false" aria-controls="vocab-form">
+                <span class="eyebrow">Bank</span>
+                <strong>Add vocabulary</strong>
+                <span class="vocab-add-hint">Tap to expand</span>
+              </button>
+              <form id="vocab-form" class="form-grid" hidden>
                 <label>
                   Word
                   <input name="word" required placeholder="die Entscheidung">
@@ -267,8 +266,12 @@
                 <p class="eyebrow" id="flashcard-folder-label">Review</p>
                 <h3>Flashcards</h3>
               </div>
-              <button class="secondary-button" data-jump="vocab" type="button">Back to vocab</button>
+              <div class="flashcard-head-actions">
+                <button class="danger-button" id="reset-folder-progress" type="button">Reset folder</button>
+                <button class="secondary-button" data-jump="vocab" type="button">Back to vocab</button>
+              </div>
             </div>
+            <div id="flashcard-folder-select" class="flashcard-folder-select"></div>
             <div id="flashcard-progress" class="flashcard-progress"></div>
             <div id="flashcard-box" class="flashcard-box"></div>
           </section>

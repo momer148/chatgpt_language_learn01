@@ -143,6 +143,7 @@ const els = {
   flashcardBox: document.querySelector("#flashcard-box"),
   flashcardProgress: document.querySelector("#flashcard-progress"),
   flashcardFolderLabel: document.querySelector("#flashcard-folder-label"),
+  flashcardFolderSelect: document.querySelector("#flashcard-folder-select"),
   vocabList: document.querySelector("#vocab-list"),
   grammarList: document.querySelector("#grammar-list"),
   mediaList: document.querySelector("#media-list"),
@@ -152,7 +153,11 @@ const els = {
   vocabSearch: document.querySelector("#vocab-search"),
   vocabFolderFilter: document.querySelector("#vocab-folder-filter"),
   vocabFolderOptions: document.querySelector("#vocab-folder-options"),
-  vocabImport: document.querySelector("#vocab-import")
+  vocabImport: document.querySelector("#vocab-import"),
+  vocabAddToggle: document.querySelector("#vocab-add-toggle"),
+  vocabAddHint: document.querySelector("#vocab-add-toggle .vocab-add-hint"),
+  vocabForm: document.querySelector("#vocab-form"),
+  resetFolderProgress: document.querySelector("#reset-folder-progress")
 };
 
 document.addEventListener("DOMContentLoaded", init);
@@ -262,7 +267,13 @@ function bindActions() {
     if (button.dataset.deleteWord) deleteWord(button.dataset.deleteWord);
     if (button.dataset.deleteGrammar) deleteGrammar(button.dataset.deleteGrammar);
     if (button.dataset.toggleGrammar) toggleGrammar(button.dataset.toggleGrammar);
-    if (button.dataset.startVocabReview) startVocabReview(button.dataset.startVocabReview);
+    if (button.dataset.startVocabReview) {
+      let target = button.dataset.startVocabReview;
+      if (target === "__select__") {
+        target = document.querySelector("#review-folder")?.value || "all";
+      }
+      startVocabReview(target);
+    }
     if (button.dataset.reviewReveal) revealReview();
     if (button.dataset.reviewGrade) gradeReview(button.dataset.reviewGrade);
     if (button.dataset.startTask) startTimer(button.dataset.startTask);
@@ -286,7 +297,34 @@ function bindActions() {
     renderReview();
     renderVocabList();
   });
+  els.reviewBox.addEventListener("change", (event) => {
+    const select = event.target;
+    if (!select || select.id !== "review-folder") return;
+    if (els.vocabFolderFilter) els.vocabFolderFilter.value = select.value;
+    reviewSession.folder = select.value;
+    renderReview();
+    renderVocabList();
+  });
   els.vocabImport.addEventListener("change", importVocabFile);
+  if (els.vocabAddToggle && els.vocabForm) {
+    els.vocabAddToggle.addEventListener("click", () => {
+      const open = els.vocabAddToggle.getAttribute("aria-expanded") === "true";
+      els.vocabAddToggle.setAttribute("aria-expanded", String(!open));
+      els.vocabForm.hidden = open;
+      if (els.vocabAddHint) els.vocabAddHint.textContent = open ? "Tap to expand" : "Tap to collapse";
+    });
+  }
+  if (els.resetFolderProgress) {
+    els.resetFolderProgress.addEventListener("click", resetReviewFolderProgress);
+  }
+  if (els.flashcardFolderSelect) {
+    els.flashcardFolderSelect.addEventListener("change", (event) => {
+      const select = event.target;
+      if (!select || select.id !== "flashcard-folder") return;
+      if (els.vocabFolderFilter) els.vocabFolderFilter.value = select.value;
+      startVocabReview(select.value);
+    });
+  }
 }
 
 function switchTab(tabName) {
@@ -382,12 +420,23 @@ function renderReview() {
   const folder = els.vocabFolderFilter?.value || "all";
   const due = dueVocab(folder);
   const dueAll = dueVocab().length;
+  const folders = vocabFolderNames();
+  const folderPicker = `
+    <label class="review-folder-picker">
+      <span>Folder</span>
+      <select id="review-folder" aria-label="Folder to review">
+        <option value="all"${folder === "all" ? " selected" : ""}>All folders</option>
+        ${folders.map((name) => `<option value="${escapeHtml(name)}"${name === folder ? " selected" : ""}>${escapeHtml(name)}</option>`).join("")}
+      </select>
+    </label>
+  `;
   if (!due.length) {
     const html = `
       <strong>No words due</strong>
       <p>Add words or come back when reviews are due.</p>
+      ${folderPicker}
       <div class="review-actions">
-        <button class="secondary-button" data-start-vocab-review="${escapeHtml(folder)}" type="button">Start review</button>
+        <button class="secondary-button" data-start-vocab-review="__select__" type="button">Start review</button>
       </div>
     `;
     els.reviewBox.innerHTML = html;
@@ -406,8 +455,9 @@ function renderReview() {
     <span class="pill">${escapeHtml(folderLabel)}</span>
     <strong>${due.length} word${due.length === 1 ? "" : "s"} due</strong>
     <p>Review uses spaced repetition and reschedules each card from your answer.</p>
+    ${folderPicker}
     <div class="review-actions">
-      <button class="primary-button" data-start-vocab-review="${escapeHtml(folder)}" type="button">Start review</button>
+      <button class="primary-button" data-start-vocab-review="__select__" type="button">Start review</button>
     </div>
   `;
   els.reviewBox.innerHTML = card;
@@ -440,6 +490,18 @@ function renderFlashcard() {
   const active = state.vocab.find((word) => word.id === activeReviewId);
   const grades = reviewSession.grades || {};
   els.flashcardFolderLabel.textContent = folderLabel;
+  if (els.flashcardFolderSelect) {
+    const folderNames = vocabFolderNames();
+    els.flashcardFolderSelect.innerHTML = `
+      <label>
+        <span>Folder</span>
+        <select id="flashcard-folder" aria-label="Folder to review">
+          <option value="all"${folder === "all" ? " selected" : ""}>All folders</option>
+          ${folderNames.map((name) => `<option value="${escapeHtml(name)}"${name === folder ? " selected" : ""}>${escapeHtml(name)}</option>`).join("")}
+        </select>
+      </label>
+    `;
+  }
   els.flashcardProgress.innerHTML = `
     <button class="progress-chip is-left" type="button"><strong>${reviewQueueIds.length}</strong><span>left</span></button>
     <button class="progress-chip is-reviewed" type="button"><strong>${reviewSession.seen}</strong><span>reviewed</span></button>
@@ -689,6 +751,26 @@ function gradeReview(grade) {
   activeReviewId = reviewQueueIds[0] || null;
   reviewRevealed = false;
   saveAndRender();
+}
+
+function resetReviewFolderProgress() {
+  const folder = reviewSession.folder || "all";
+  const label = folder === "all" ? "all folders" : folder;
+  const affected = state.vocab.filter((word) => folder === "all" || (word.folder || "General") === folder);
+  if (!affected.length) return;
+  const ok = window.confirm(`Reset review progress for ${affected.length} word${affected.length === 1 ? "" : "s"} in ${label}? They will all become due today and lose their interval, ease, and streak.`);
+  if (!ok) return;
+  const today = todayKey();
+  affected.forEach((word) => {
+    word.interval = 0;
+    word.ease = 2.5;
+    word.repetitions = 0;
+    word.lapses = 0;
+    word.lastReviewed = null;
+    word.due = today;
+  });
+  saveState();
+  startVocabReview(folder);
 }
 
 function startVocabReview(folder = "all") {
