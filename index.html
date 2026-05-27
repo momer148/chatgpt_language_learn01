@@ -6,9 +6,82 @@
     <meta name="theme-color" content="#0f766e">
     <title>Study Pulse</title>
     <link rel="manifest" href="manifest.webmanifest">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@1,6..72,400;1,6..72,500&display=swap">
     <link rel="stylesheet" href="styles.css">
   </head>
   <body>
+    <div class="welcome" id="welcome" data-mode="returning" hidden>
+      <div class="welcome-shell">
+        <section class="welcome-left">
+          <header class="welcome-brand-bar">
+            <div class="welcome-brand-dot">S</div>
+            <div class="brand-name welcome-brand-name">study<em>/pulse</em></div>
+            <div class="welcome-spacer"></div>
+            <div class="welcome-chip"><span class="welcome-chip-dot"></span><span id="welcome-time">live</span></div>
+          </header>
+          <div class="welcome-hero">
+            <p class="welcome-eyebrow"><span class="welcome-eyebrow-line"></span>A daily practice for</p>
+            <h1 class="welcome-headline">Vocabulary<br>Grammar<br>&amp; <em id="welcome-word">listening.</em></h1>
+            <p class="welcome-lede">A warm, local-first workspace for language learners. Plan your week, drill grammar, and run spaced-repetition flashcards — all in your browser. No accounts, no sync, never trained on.</p>
+            <div class="welcome-tiles">
+              <div class="welcome-tile" data-shape="squircle">
+                <div class="welcome-tile-shape"></div>
+                <div class="welcome-tile-num">01</div>
+                <div class="welcome-tile-title">Vocab folders</div>
+                <div class="welcome-tile-desc">Anki-style flashcards organized by deck.</div>
+              </div>
+              <div class="welcome-tile" data-shape="circle">
+                <div class="welcome-tile-shape"></div>
+                <div class="welcome-tile-num">02</div>
+                <div class="welcome-tile-title">Grammar drills</div>
+                <div class="welcome-tile-desc">Queue book exercises and tick them off.</div>
+              </div>
+              <div class="welcome-tile">
+                <div class="welcome-tile-shape"></div>
+                <div class="welcome-tile-num">03</div>
+                <div class="welcome-tile-title">Reading &amp; listening</div>
+                <div class="welcome-tile-desc">Log minutes; watch weekly progress.</div>
+              </div>
+            </div>
+          </div>
+          <div class="welcome-status">
+            <span class="welcome-chip welcome-chip-strong">local-first</span>
+            <span>Your data, your device.</span>
+          </div>
+        </section>
+
+        <section class="welcome-right">
+          <div class="welcome-card">
+            <div class="welcome-segmented">
+              <div class="welcome-seg-track" data-pos="0"></div>
+              <button class="welcome-seg-btn" type="button" data-mode="returning" data-active="true">Returning</button>
+              <button class="welcome-seg-btn" type="button" data-mode="new" data-active="false">New here</button>
+            </div>
+            <h2 class="welcome-form-title" id="welcome-title">Welcome <em>back.</em></h2>
+            <p class="welcome-form-sub" id="welcome-sub">Pick up where you left off.</p>
+            <form id="welcome-form" class="welcome-fields" novalidate>
+              <label class="welcome-field">
+                <div class="welcome-field-meta">
+                  <span class="welcome-field-label">Display name</span>
+                  <span class="welcome-field-pill" id="welcome-name-pill">optional</span>
+                </div>
+                <div class="welcome-field-row">
+                  <input type="text" id="welcome-name" autocomplete="given-name" placeholder="Hadley" spellcheck="false">
+                </div>
+              </label>
+              <button class="welcome-submit primary-button no-arrow" type="submit">
+                <span>Enter</span>
+                <span class="welcome-submit-arrow">→</span>
+              </button>
+            </form>
+            <div class="welcome-card-footer">No account. Your data stays on this device.</div>
+          </div>
+        </section>
+      </div>
+    </div>
+
     <div class="app-shell">
       <aside class="sidebar">
         <div class="brand">
@@ -18,7 +91,7 @@
             <span></span>
           </div>
           <div>
-            <h1>Study Pulse</h1>
+            <h1>study<em>/pulse</em></h1>
             <p>Daily language routine</p>
           </div>
         </div>
@@ -49,7 +122,7 @@
         <section class="topbar" aria-label="Overview">
           <div>
             <p class="eyebrow" id="today-date">Today</p>
-            <h2 id="daily-heading">Your study plan</h2>
+            <h2 id="daily-heading">Your study <em>plan.</em></h2>
           </div>
           <div class="quick-stats">
             <div>
@@ -229,10 +302,13 @@
                 <p class="eyebrow">Import</p>
                 <h3>Upload vocabulary</h3>
               </div>
-              <label class="file-button">
-                Upload Excel
-                <input id="vocab-import" type="file" accept=".xlsx,.xls,.csv">
-              </label>
+              <div class="import-head-actions">
+                <button class="secondary-button no-arrow" id="bulk-load-toggle" type="button" aria-expanded="false" aria-controls="bulk-load">Bulk load</button>
+                <label class="file-button">
+                  Upload Excel
+                  <input id="vocab-import" type="file" accept=".xlsx,.xls,.csv">
+                </label>
+              </div>
             </div>
             <div class="import-fields">
               <span class="pill">word</span>
@@ -241,6 +317,28 @@
               <span class="pill">folder</span>
               <span class="pill">topic</span>
               <span class="pill">due</span>
+            </div>
+            <div class="bulk-load" id="bulk-load" hidden>
+              <p class="bulk-hint">Paste cells from a spreadsheet starting at any cell — extra rows/columns will fill the grid. Empty rows are ignored.</p>
+              <div class="bulk-table-wrapper">
+                <table class="bulk-table">
+                  <thead>
+                    <tr>
+                      <th>Word</th>
+                      <th>Meaning</th>
+                      <th>Sentence</th>
+                      <th>Folder</th>
+                      <th>Topic</th>
+                      <th>Due</th>
+                    </tr>
+                  </thead>
+                  <tbody id="bulk-tbody"></tbody>
+                </table>
+              </div>
+              <div class="bulk-actions">
+                <button class="secondary-button" id="bulk-cancel" type="button">Cancel</button>
+                <button class="primary-button no-arrow" id="bulk-save" type="button">Save rows</button>
+              </div>
             </div>
           </section>
 
@@ -251,11 +349,17 @@
                 <h3>Vocabulary list</h3>
               </div>
               <div class="list-controls">
-                <select id="vocab-folder-filter" aria-label="Filter by folder"></select>
+                <div class="list-controls-row">
+                  <div class="view-toggle" role="tablist" aria-label="Vocab list view">
+                    <button class="view-toggle-btn" type="button" data-view="cards" aria-pressed="true">Cards</button>
+                    <button class="view-toggle-btn" type="button" data-view="table" aria-pressed="false">Table</button>
+                  </div>
+                  <select id="vocab-folder-filter" aria-label="Filter by folder"></select>
+                </div>
                 <input class="search-input" id="vocab-search" placeholder="Search words">
               </div>
             </div>
-            <div id="vocab-list" class="word-list"></div>
+            <div id="vocab-list" class="word-list" data-view="cards"></div>
           </section>
         </section>
 
@@ -369,6 +473,53 @@
         </section>
 
         <section class="panel" id="settings-panel" data-panel="settings">
+          <section class="surface palette-surface">
+            <div class="section-head">
+              <div>
+                <p class="eyebrow">Look &amp; feel</p>
+                <h3>Palette</h3>
+              </div>
+            </div>
+            <p class="body-copy">Switch the warm tonal palette. Saved on this device.</p>
+            <div class="palette-grid" id="palette-grid">
+              <button class="palette-card" type="button" data-palette="peach">
+                <div class="palette-swatches">
+                  <span style="background:#f4eddb"></span>
+                  <span style="background:#f4c9a6"></span>
+                  <span style="background:#e87b3e"></span>
+                  <span style="background:#2a1f15"></span>
+                </div>
+                <div class="palette-name">Peach</div>
+              </button>
+              <button class="palette-card" type="button" data-palette="sage">
+                <div class="palette-swatches">
+                  <span style="background:#e7ecd9"></span>
+                  <span style="background:#b8cb96"></span>
+                  <span style="background:#6b8e4e"></span>
+                  <span style="background:#243018"></span>
+                </div>
+                <div class="palette-name">Sage</div>
+              </button>
+              <button class="palette-card" type="button" data-palette="lilac">
+                <div class="palette-swatches">
+                  <span style="background:#ece1f0"></span>
+                  <span style="background:#d5bce4"></span>
+                  <span style="background:#8c5db3"></span>
+                  <span style="background:#2d1f3a"></span>
+                </div>
+                <div class="palette-name">Lilac</div>
+              </button>
+              <button class="palette-card" type="button" data-palette="sky">
+                <div class="palette-swatches">
+                  <span style="background:#dde4ec"></span>
+                  <span style="background:#b3cbe4"></span>
+                  <span style="background:#3d7eb8"></span>
+                  <span style="background:#1f2733"></span>
+                </div>
+                <div class="palette-name">Sky</div>
+              </button>
+            </div>
+          </section>
           <div class="two-column">
             <section class="surface">
               <div class="section-head">

@@ -1,15 +1,33 @@
 const STORAGE_KEY = "study-pulse-state-v1";
+const PALETTE_KEY = "study-pulse-palette";
+const WELCOME_KEY = "study-pulse-welcomed";
+const PALETTES = ["peach", "sage", "lilac", "sky"];
+
+function loadPalette() {
+  const stored = localStorage.getItem(PALETTE_KEY);
+  return PALETTES.includes(stored) ? stored : "peach";
+}
+
+function applyPalette(name) {
+  const palette = PALETTES.includes(name) ? name : "peach";
+  document.documentElement.setAttribute("data-palette", palette);
+  localStorage.setItem(PALETTE_KEY, palette);
+}
+
+applyPalette(loadPalette());
 const MS_PER_DAY = 86400000;
 
 const defaultState = {
   tasks: [
     {
-      id: crypto.randomUUID(),
-      title: "Vocab review",
+      id: "task-flashcards",
+      title: "Flashcards",
       type: "Vocabulary",
       time: "09:00",
       duration: 60,
-      notes: "Review due words, then add five new examples."
+      notes: "Run your spaced-repetition flashcards for today.",
+      linkTab: "vocab",
+      pinned: true
     },
     {
       id: crypto.randomUUID(),
@@ -111,16 +129,39 @@ let state = loadState();
 let activeReviewId = null;
 let reviewRevealed = false;
 let reviewQueueIds = [];
-let reviewSession = {
-  folder: "all",
-  seen: 0,
-  grades: {
-    again: 0,
-    hard: 0,
-    good: 0,
-    easy: 0
+const reviewSessions = {};
+function getReviewSession(folder) {
+  if (!reviewSessions[folder]) {
+    reviewSessions[folder] = {
+      folder,
+      seen: 0,
+      grades: { again: 0, hard: 0, good: 0, easy: 0 },
+      wordGrades: {},
+      filter: null
+    };
   }
-};
+  return reviewSessions[folder];
+}
+
+function buildReviewQueue(folder, filter) {
+  if (!filter) {
+    return dueVocab(folder).map((word) => word.id);
+  }
+  return state.vocab
+    .filter((word) => folder === "all" || (word.folder || "General") === folder)
+    .filter((word) => word.lastGrade === filter)
+    .map((word) => word.id);
+}
+
+function toggleReviewFilter(grade) {
+  if (!reviewSession) return;
+  reviewSession.filter = reviewSession.filter === grade ? null : grade;
+  reviewQueueIds = buildReviewQueue(reviewSession.folder, reviewSession.filter);
+  activeReviewId = reviewQueueIds[0] || null;
+  reviewRevealed = false;
+  renderFlashcard();
+}
+let reviewSession = getReviewSession("all");
 let timer = {
   id: null,
   taskId: null,
@@ -157,7 +198,22 @@ const els = {
   vocabAddToggle: document.querySelector("#vocab-add-toggle"),
   vocabAddHint: document.querySelector("#vocab-add-toggle .vocab-add-hint"),
   vocabForm: document.querySelector("#vocab-form"),
-  resetFolderProgress: document.querySelector("#reset-folder-progress")
+  resetFolderProgress: document.querySelector("#reset-folder-progress"),
+  bulkToggle: document.querySelector("#bulk-load-toggle"),
+  bulkPanel: document.querySelector("#bulk-load"),
+  bulkTbody: document.querySelector("#bulk-tbody"),
+  bulkSave: document.querySelector("#bulk-save"),
+  bulkCancel: document.querySelector("#bulk-cancel"),
+  welcome: document.querySelector("#welcome"),
+  welcomeForm: document.querySelector("#welcome-form"),
+  welcomeName: document.querySelector("#welcome-name"),
+  welcomeNamePill: document.querySelector("#welcome-name-pill"),
+  welcomeTitle: document.querySelector("#welcome-title"),
+  welcomeSub: document.querySelector("#welcome-sub"),
+  welcomeWord: document.querySelector("#welcome-word"),
+  welcomeTime: document.querySelector("#welcome-time"),
+  welcomeSegTrack: document.querySelector(".welcome-seg-track"),
+  welcomeSegBtns: document.querySelectorAll(".welcome-seg-btn")
 };
 
 document.addEventListener("DOMContentLoaded", init);
@@ -167,10 +223,178 @@ function init() {
   bindNavigation();
   bindForms();
   bindActions();
+  bindPalettePicker();
+  bindWelcome();
   registerServiceWorker();
   updateNotificationStatus();
   render();
   setInterval(checkDueNotifications, 30000);
+}
+
+const BULK_COLUMNS = ["word", "meaning", "sentence", "folder", "topic", "due"];
+const BULK_ROW_COUNT = 15;
+
+function buildBulkRows() {
+  if (!els.bulkTbody) return;
+  els.bulkTbody.innerHTML = Array.from({ length: BULK_ROW_COUNT }).map(() => {
+    const cells = BULK_COLUMNS.map((col) => `<td><input type="text" data-bulk-col="${col}" spellcheck="false"></td>`).join("");
+    return `<tr>${cells}</tr>`;
+  }).join("");
+}
+
+function bindBulkLoad() {
+  if (!els.bulkToggle || !els.bulkPanel || !els.bulkTbody) return;
+  els.bulkToggle.addEventListener("click", () => {
+    const open = els.bulkToggle.getAttribute("aria-expanded") === "true";
+    if (open) {
+      els.bulkPanel.hidden = true;
+      els.bulkToggle.setAttribute("aria-expanded", "false");
+    } else {
+      buildBulkRows();
+      els.bulkPanel.hidden = false;
+      els.bulkToggle.setAttribute("aria-expanded", "true");
+      const first = els.bulkTbody.querySelector("input");
+      if (first) first.focus();
+    }
+  });
+  if (els.bulkCancel) {
+    els.bulkCancel.addEventListener("click", () => {
+      els.bulkPanel.hidden = true;
+      els.bulkToggle.setAttribute("aria-expanded", "false");
+    });
+  }
+  if (els.bulkSave) {
+    els.bulkSave.addEventListener("click", saveBulkRows);
+  }
+  els.bulkTbody.addEventListener("paste", handleBulkPaste);
+}
+
+function handleBulkPaste(event) {
+  const text = event.clipboardData?.getData("text");
+  if (!text) return;
+  if (!text.includes("\t") && !text.includes("\n")) return;
+  const target = event.target;
+  if (!target || target.tagName !== "INPUT") return;
+  event.preventDefault();
+  const rows = Array.from(els.bulkTbody.children);
+  const startRow = rows.indexOf(target.closest("tr"));
+  const startCol = Array.from(target.closest("tr").children).indexOf(target.closest("td"));
+  const lines = text.replace(/\r/g, "").split("\n");
+  while (lines.length && !lines[lines.length - 1]) lines.pop();
+  lines.forEach((line, rOff) => {
+    const tr = els.bulkTbody.children[startRow + rOff];
+    if (!tr) return;
+    const cells = line.split("\t");
+    cells.forEach((value, cOff) => {
+      const td = tr.children[startCol + cOff];
+      if (!td) return;
+      const input = td.querySelector("input");
+      if (input) input.value = value;
+    });
+  });
+}
+
+function saveBulkRows() {
+  const rows = Array.from(els.bulkTbody.children);
+  let added = 0;
+  rows.forEach((tr) => {
+    const inputs = tr.querySelectorAll("input");
+    const data = {};
+    inputs.forEach((input) => {
+      data[input.dataset.bulkCol] = input.value;
+    });
+    if (!String(data.word || "").trim()) return;
+    state.vocab.push(createVocabEntry(data));
+    added += 1;
+  });
+  if (added === 0) {
+    window.alert("Nothing to save — at least one row needs a word.");
+    return;
+  }
+  els.bulkPanel.hidden = true;
+  els.bulkToggle.setAttribute("aria-expanded", "false");
+  saveAndRender();
+}
+
+function bindPalettePicker() {
+  const grid = document.querySelector("#palette-grid");
+  if (!grid) return;
+  const setActive = (active) => {
+    grid.querySelectorAll(".palette-card").forEach((card) => {
+      card.setAttribute("data-active", String(card.dataset.palette === active));
+    });
+  };
+  setActive(loadPalette());
+  grid.addEventListener("click", (event) => {
+    const card = event.target.closest(".palette-card");
+    if (!card) return;
+    const choice = card.dataset.palette;
+    applyPalette(choice);
+    setActive(choice);
+  });
+}
+
+function bindWelcome() {
+  if (!els.welcome) return;
+  const welcomed = localStorage.getItem(WELCOME_KEY) === "true";
+  if (!welcomed) {
+    els.welcome.hidden = false;
+    document.body.style.overflow = "hidden";
+    startWelcomeWord();
+    startWelcomeClock();
+  }
+  els.welcomeSegBtns.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const mode = btn.dataset.mode;
+      els.welcome.dataset.mode = mode;
+      els.welcomeSegBtns.forEach((b) => b.setAttribute("data-active", String(b.dataset.mode === mode)));
+      if (els.welcomeSegTrack) els.welcomeSegTrack.dataset.pos = mode === "new" ? "1" : "0";
+      if (mode === "new") {
+        els.welcomeTitle.innerHTML = "Open a <em>file.</em>";
+        els.welcomeSub.textContent = "What should we call you?";
+        if (els.welcomeNamePill) els.welcomeNamePill.textContent = "to display";
+      } else {
+        els.welcomeTitle.innerHTML = "Welcome <em>back.</em>";
+        els.welcomeSub.textContent = "Pick up where you left off.";
+        if (els.welcomeNamePill) els.welcomeNamePill.textContent = "optional";
+      }
+    });
+  });
+  els.welcomeForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const name = (els.welcomeName.value || "").trim();
+    if (name) {
+      state.profile = state.profile || {};
+      state.profile.displayName = name;
+      saveState();
+    }
+    localStorage.setItem(WELCOME_KEY, "true");
+    els.welcome.hidden = true;
+    document.body.style.overflow = "";
+  });
+}
+
+const WELCOME_WORDS = ["vocabulary.", "grammar.", "fluency.", "listening.", "reading."];
+function startWelcomeWord() {
+  if (!els.welcomeWord) return;
+  let i = 0;
+  const tick = () => {
+    els.welcomeWord.textContent = WELCOME_WORDS[i % WELCOME_WORDS.length];
+    i += 1;
+  };
+  tick();
+  setInterval(tick, 2400);
+}
+
+function startWelcomeClock() {
+  if (!els.welcomeTime) return;
+  const tick = () => {
+    const now = new Date();
+    const time = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    els.welcomeTime.textContent = `live · ${time}`;
+  };
+  tick();
+  setInterval(tick, 1000);
 }
 
 function setDefaultDates() {
@@ -277,7 +501,10 @@ function bindActions() {
     if (button.dataset.reviewReveal) revealReview();
     if (button.dataset.reviewGrade) gradeReview(button.dataset.reviewGrade);
     if (button.dataset.startTask) startTimer(button.dataset.startTask);
-    if (button.dataset.jump) closeMobileMenu();
+    if (button.dataset.jump) {
+      switchTab(button.dataset.jump);
+      closeMobileMenu();
+    }
   });
 
   document.querySelector("#enable-notifications").addEventListener("click", requestNotifications);
@@ -306,6 +533,25 @@ function bindActions() {
     renderVocabList();
   });
   els.vocabImport.addEventListener("change", importVocabFile);
+  bindBulkLoad();
+  document.querySelectorAll(".view-toggle-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const view = btn.dataset.view;
+      els.vocabList.dataset.view = view;
+      document.querySelectorAll(".view-toggle-btn").forEach((b) => {
+        b.setAttribute("aria-pressed", String(b.dataset.view === view));
+      });
+      try { localStorage.setItem("study-pulse-vocab-view", view); } catch (_) {}
+      renderVocabList();
+    });
+  });
+  const savedView = localStorage.getItem("study-pulse-vocab-view");
+  if (savedView === "table" || savedView === "cards") {
+    els.vocabList.dataset.view = savedView;
+    document.querySelectorAll(".view-toggle-btn").forEach((b) => {
+      b.setAttribute("aria-pressed", String(b.dataset.view === savedView));
+    });
+  }
   if (els.vocabAddToggle && els.vocabForm) {
     els.vocabAddToggle.addEventListener("click", () => {
       const open = els.vocabAddToggle.getAttribute("aria-expanded") === "true";
@@ -323,6 +569,13 @@ function bindActions() {
       if (!select || select.id !== "flashcard-folder") return;
       if (els.vocabFolderFilter) els.vocabFolderFilter.value = select.value;
       startVocabReview(select.value);
+    });
+  }
+  if (els.flashcardProgress) {
+    els.flashcardProgress.addEventListener("click", (event) => {
+      const chip = event.target.closest("[data-filter]");
+      if (!chip) return;
+      toggleReviewFilter(chip.dataset.filter);
     });
   }
 }
@@ -489,6 +742,7 @@ function renderFlashcard() {
   const folderLabel = folder === "all" ? "All folders" : folder;
   const active = state.vocab.find((word) => word.id === activeReviewId);
   const grades = reviewSession.grades || {};
+  const activeFilter = reviewSession.filter || null;
   els.flashcardFolderLabel.textContent = folderLabel;
   if (els.flashcardFolderSelect) {
     const folderNames = vocabFolderNames();
@@ -503,11 +757,11 @@ function renderFlashcard() {
     `;
   }
   els.flashcardProgress.innerHTML = `
-    <button class="progress-chip is-left" type="button"><strong>${reviewQueueIds.length}</strong><span>left</span></button>
-    <button class="progress-chip is-reviewed" type="button"><strong>${reviewSession.seen}</strong><span>reviewed</span></button>
-    <button class="progress-chip is-again" type="button"><strong>${grades.again || 0}</strong><span>Again</span></button>
-    <button class="progress-chip is-hard" type="button"><strong>${grades.hard || 0}</strong><span>Hard</span></button>
-    <button class="progress-chip is-good" type="button"><strong>${grades.good || 0}</strong><span>Good</span></button>
+    <button class="progress-chip is-left" type="button" disabled><strong>${reviewQueueIds.length}</strong><span>left</span></button>
+    <button class="progress-chip is-reviewed" type="button" disabled><strong>${reviewSession.seen}</strong><span>reviewed</span></button>
+    <button class="progress-chip is-again ${activeFilter === "again" ? "is-selected" : ""}" data-filter="again" type="button" aria-pressed="${activeFilter === "again"}"><strong>${grades.again || 0}</strong><span>Again</span></button>
+    <button class="progress-chip is-hard ${activeFilter === "hard" ? "is-selected" : ""}" data-filter="hard" type="button" aria-pressed="${activeFilter === "hard"}"><strong>${grades.hard || 0}</strong><span>Hard</span></button>
+    <button class="progress-chip is-good ${activeFilter === "good" ? "is-selected" : ""}" data-filter="good" type="button" aria-pressed="${activeFilter === "good"}"><strong>${grades.good || 0}</strong><span>Good</span></button>
   `;
 
   if (!active) {
@@ -563,9 +817,48 @@ function renderVocabList() {
     .filter((item) => [item.word, item.meaning, item.topic, item.folder].join(" ").toLowerCase().includes(query))
     .sort((a, b) => a.due.localeCompare(b.due));
 
-  els.vocabList.innerHTML = words.length
-    ? words.map(wordTemplate).join("")
-    : emptyState("No matching words", "Add a word or adjust the search.");
+  const view = els.vocabList.dataset.view === "table" ? "table" : "cards";
+  if (!words.length) {
+    els.vocabList.innerHTML = emptyState("No matching words", "Add a word or adjust the search.");
+    return;
+  }
+  if (view === "table") {
+    els.vocabList.innerHTML = vocabTableTemplate(words);
+  } else {
+    els.vocabList.innerHTML = words.map(wordTemplate).join("");
+  }
+}
+
+function vocabTableTemplate(words) {
+  const rows = words.map((word) => `
+    <tr>
+      <td class="vocab-table-word">${escapeHtml(word.word)}</td>
+      <td>${escapeHtml(word.meaning || "")}</td>
+      <td class="vocab-table-sentence">${escapeHtml(word.sentence || "")}</td>
+      <td>${escapeHtml(word.folder || "General")}</td>
+      <td>${escapeHtml(word.topic || "General")}</td>
+      <td>${escapeHtml(formatDate(word.due))}</td>
+      <td>${escapeHtml(formatInterval(word.interval))}</td>
+      <td class="vocab-table-actions"><button class="danger-button" data-delete-word="${word.id}" type="button">Delete</button></td>
+    </tr>
+  `).join("");
+  return `
+    <table class="vocab-table">
+      <thead>
+        <tr>
+          <th>Word</th>
+          <th>Meaning</th>
+          <th>Sentence</th>
+          <th>Folder</th>
+          <th>Topic</th>
+          <th>Due</th>
+          <th>Interval</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
 }
 
 function renderGrammar() {
@@ -638,11 +931,12 @@ function plannerTaskTemplate(task) {
           <span class="pill time">${escapeHtml(task.time)}</span>
           <span class="pill">${escapeHtml(task.type)}</span>
           <span class="pill">${task.duration} min</span>
+          ${task.pinned ? '<span class="pill status">Pinned</span>' : ""}
         </div>
         <h4>${escapeHtml(task.title)}</h4>
         <p>${escapeHtml(task.notes || "")}</p>
       </div>
-      <button class="danger-button" data-delete-task="${task.id}" type="button">Delete</button>
+      ${task.pinned ? "" : `<button class="danger-button" data-delete-task="${task.id}" type="button">Delete</button>`}
     </article>
   `;
 }
@@ -710,7 +1004,9 @@ function toggleTaskDone(id) {
 }
 
 function deleteTask(id) {
-  state.tasks = state.tasks.filter((task) => task.id !== id);
+  const task = state.tasks.find((t) => t.id === id);
+  if (!task || task.pinned) return;
+  state.tasks = state.tasks.filter((t) => t.id !== id);
   Object.values(state.completions).forEach((day) => delete day[id]);
   saveAndRender();
 }
@@ -743,9 +1039,19 @@ function gradeReview(grade) {
   const word = state.vocab.find((item) => item.id === activeReviewId);
   if (!word) return;
   scheduleWord(word, grade);
-  reviewSession.seen += 1;
   reviewSession.grades ||= { again: 0, hard: 0, good: 0, easy: 0 };
-  reviewSession.grades[grade] = (reviewSession.grades[grade] || 0) + 1;
+  reviewSession.wordGrades ||= {};
+  const previousGrade = reviewSession.wordGrades[word.id];
+  if (previousGrade && previousGrade !== grade) {
+    reviewSession.grades[previousGrade] = Math.max(0, (reviewSession.grades[previousGrade] || 0) - 1);
+  }
+  if (!previousGrade) {
+    reviewSession.seen += 1;
+  }
+  if (previousGrade !== grade) {
+    reviewSession.grades[grade] = (reviewSession.grades[grade] || 0) + 1;
+  }
+  reviewSession.wordGrades[word.id] = grade;
   reviewQueueIds = reviewQueueIds.filter((id) => id !== word.id);
   if (grade === "again") reviewQueueIds.push(word.id);
   activeReviewId = reviewQueueIds[0] || null;
@@ -770,21 +1076,15 @@ function resetReviewFolderProgress() {
     word.due = today;
   });
   saveState();
-  startVocabReview(folder);
+  startVocabReview(folder, { force: true });
 }
 
-function startVocabReview(folder = "all") {
-  reviewSession = {
-    folder,
-    seen: 0,
-    grades: {
-      again: 0,
-      hard: 0,
-      good: 0,
-      easy: 0
-    }
-  };
-  reviewQueueIds = dueVocab(folder).map((word) => word.id);
+function startVocabReview(folder = "all", { force = false } = {}) {
+  if (force) {
+    delete reviewSessions[folder];
+  }
+  reviewSession = getReviewSession(folder);
+  reviewQueueIds = buildReviewQueue(folder, reviewSession.filter);
   activeReviewId = reviewQueueIds[0] || null;
   reviewRevealed = false;
   switchTab("flashcards");
@@ -818,12 +1118,17 @@ function scheduleWord(word, grade) {
   word.ease = Number(ease.toFixed(2));
   word.repetitions = nextRepetitions;
   word.lastReviewed = todayKey();
+  word.lastGrade = grade;
   word.due = toDateKey(new Date(Date.now() + word.interval * MS_PER_DAY));
 }
 
 function startTimer(taskId) {
   const task = state.tasks.find((item) => item.id === taskId);
   if (!task) return;
+  if (task.linkTab) {
+    switchTab(task.linkTab);
+    return;
+  }
   stopTimer(false);
   timer.taskId = task.id;
   timer.remaining = Number(task.duration) * 60;
@@ -1107,8 +1412,31 @@ function normalizeState(value) {
     ...(Array.isArray(value.vocabFolders) ? value.vocabFolders.map((folder) => folder.name) : []),
     ...vocab.map((word) => word.folder || "General")
   ]);
+  const tasks = Array.isArray(value.tasks) ? value.tasks.slice() : [];
+  let flashcardsTask = tasks.find((t) => t.id === "task-flashcards") ||
+                       tasks.find((t) => t.title === "Vocab review" || t.title === "Flashcards");
+  if (flashcardsTask) {
+    flashcardsTask.id = "task-flashcards";
+    flashcardsTask.title = "Flashcards";
+    flashcardsTask.linkTab = "vocab";
+    flashcardsTask.pinned = true;
+    if (!flashcardsTask.type) flashcardsTask.type = "Vocabulary";
+    if (!flashcardsTask.duration) flashcardsTask.duration = 60;
+    if (!flashcardsTask.time) flashcardsTask.time = "09:00";
+  } else {
+    tasks.unshift({
+      id: "task-flashcards",
+      title: "Flashcards",
+      type: "Vocabulary",
+      time: "09:00",
+      duration: 60,
+      notes: "Run your spaced-repetition flashcards for today.",
+      linkTab: "vocab",
+      pinned: true
+    });
+  }
   return {
-    tasks: Array.isArray(value.tasks) ? value.tasks : [],
+    tasks,
     vocab,
     vocabFolders: [...folderNames].filter(Boolean).map((name) => ({ id: crypto.randomUUID(), name })),
     grammar: Array.isArray(value.grammar) ? value.grammar : [],
