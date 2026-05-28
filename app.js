@@ -20,7 +20,7 @@ const MS_PER_DAY = 86400000;
 const defaultState = {
   tasks: [
     {
-      id: "task-flashcards",
+      id: crypto.randomUUID(),
       title: "Flashcards",
       type: "Vocabulary",
       time: "09:00",
@@ -156,6 +156,7 @@ function buildReviewQueue(folder, filter) {
 function toggleReviewFilter(grade) {
   if (!reviewSession) return;
   reviewSession.filter = reviewSession.filter === grade ? null : grade;
+  syncReviewSession(reviewSession);
   reviewQueueIds = buildReviewQueue(reviewSession.folder, reviewSession.filter);
   activeReviewId = reviewQueueIds[0] || null;
   reviewRevealed = false;
@@ -207,7 +208,11 @@ const els = {
   welcome: document.querySelector("#welcome"),
   welcomeForm: document.querySelector("#welcome-form"),
   welcomeName: document.querySelector("#welcome-name"),
-  welcomeNamePill: document.querySelector("#welcome-name-pill"),
+  welcomeNameField: document.querySelector("#welcome-name-field"),
+  welcomeEmail: document.querySelector("#welcome-email"),
+  welcomeStatus: document.querySelector("#welcome-status"),
+  welcomeSubmitLabel: document.querySelector("#welcome-submit-label"),
+  welcomeSkip: document.querySelector("#welcome-skip"),
   welcomeTitle: document.querySelector("#welcome-title"),
   welcomeSub: document.querySelector("#welcome-sub"),
   welcomeWord: document.querySelector("#welcome-word"),
@@ -225,6 +230,7 @@ function init() {
   bindActions();
   bindPalettePicker();
   bindWelcome();
+  bindSync();
   registerServiceWorker();
   updateNotificationStatus();
   render();
@@ -296,7 +302,7 @@ function handleBulkPaste(event) {
 
 function saveBulkRows() {
   const rows = Array.from(els.bulkTbody.children);
-  let added = 0;
+  const newWords = [];
   rows.forEach((tr) => {
     const inputs = tr.querySelectorAll("input");
     const data = {};
@@ -304,15 +310,17 @@ function saveBulkRows() {
       data[input.dataset.bulkCol] = input.value;
     });
     if (!String(data.word || "").trim()) return;
-    state.vocab.push(createVocabEntry(data));
-    added += 1;
+    const entry = createVocabEntry(data);
+    state.vocab.push(entry);
+    newWords.push(entry);
   });
-  if (added === 0) {
+  if (newWords.length === 0) {
     window.alert("Nothing to save — at least one row needs a word.");
     return;
   }
   els.bulkPanel.hidden = true;
   els.bulkToggle.setAttribute("aria-expanded", "false");
+  syncVocabUpsert(newWords);
   saveAndRender();
 }
 
@@ -331,47 +339,435 @@ function bindPalettePicker() {
     const choice = card.dataset.palette;
     applyPalette(choice);
     setActive(choice);
+    window.StudyPulseDb?.upsertProfile?.({ palette: choice });
   });
 }
 
+const PENDING_NAME_KEY = "study-pulse-pending-name";
+
 function bindWelcome() {
   if (!els.welcome) return;
-  const welcomed = localStorage.getItem(WELCOME_KEY) === "true";
-  if (!welcomed) {
-    els.welcome.hidden = false;
-    document.body.style.overflow = "hidden";
-    startWelcomeWord();
-    startWelcomeClock();
+  setWelcomeMode("returning");
+  // Surface any auth redirect errors from the URL hash (expired/invalid links).
+  if (window.location.hash && window.location.hash.includes("error")) {
+    const params = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+    const errCode = params.get("error_code");
+    const errDesc = params.get("error_description");
+    if (errCode || errDesc) {
+      showWelcome();
+      const friendly = errCode === "otp_expired"
+        ? "That magic link expired or was replaced by a newer one. Request a fresh one below."
+        : (errDesc ? decodeURIComponent(errDesc.replace(/\+/g, " ")) : "Sign-in failed.");
+      setWelcomeStatus(friendly, "error");
+      // Clear the hash so reloading doesn't re-show it.
+      history.replaceState(null, "", window.location.pathname + window.location.search);
+    }
   }
   els.welcomeSegBtns.forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const mode = btn.dataset.mode;
-      els.welcome.dataset.mode = mode;
-      els.welcomeSegBtns.forEach((b) => b.setAttribute("data-active", String(b.dataset.mode === mode)));
-      if (els.welcomeSegTrack) els.welcomeSegTrack.dataset.pos = mode === "new" ? "1" : "0";
-      if (mode === "new") {
-        els.welcomeTitle.innerHTML = "Open a <em>file.</em>";
-        els.welcomeSub.textContent = "What should we call you?";
-        if (els.welcomeNamePill) els.welcomeNamePill.textContent = "to display";
-      } else {
-        els.welcomeTitle.innerHTML = "Welcome <em>back.</em>";
-        els.welcomeSub.textContent = "Pick up where you left off.";
-        if (els.welcomeNamePill) els.welcomeNamePill.textContent = "optional";
+    btn.addEventListener("click", () => setWelcomeMode(btn.dataset.mode));
+  });
+  els.welcomeForm.addEventListener("submit", handleWelcomeSubmit);
+  if (els.welcomeSkip) {
+    els.welcomeSkip.addEventListener("click", () => {
+      localStorage.setItem(WELCOME_KEY, "true");
+      hideWelcome();
+    });
+  }
+
+  const auth = window.StudyPulseAuth;
+  if (auth) {
+    auth.onChange((event, session) => {
+      const welcomed = localStorage.getItem(WELCOME_KEY) === "true";
+      if (session?.user) {
+        localStorage.setItem(WELCOME_KEY, "true");
+        hideWelcome();
+        claimPendingName(session.user);
+      } else if (event === "INITIAL" && !welcomed) {
+        showWelcome();
+      } else if (event === "SIGNED_OUT") {
+        // Stay on the app; user can re-sign-in via Settings later.
       }
     });
-  });
-  els.welcomeForm.addEventListener("submit", (event) => {
-    event.preventDefault();
-    const name = (els.welcomeName.value || "").trim();
-    if (name) {
-      state.profile = state.profile || {};
-      state.profile.displayName = name;
-      saveState();
+  } else {
+    const welcomed = localStorage.getItem(WELCOME_KEY) === "true";
+    if (!welcomed) showWelcome();
+  }
+}
+
+function showWelcome() {
+  els.welcome.hidden = false;
+  document.body.style.overflow = "hidden";
+  startWelcomeWord();
+  startWelcomeClock();
+}
+
+function hideWelcome() {
+  els.welcome.hidden = true;
+  document.body.style.overflow = "";
+}
+
+function setWelcomeMode(mode) {
+  els.welcome.dataset.mode = mode;
+  els.welcomeSegBtns.forEach((b) => b.setAttribute("data-active", String(b.dataset.mode === mode)));
+  if (els.welcomeSegTrack) els.welcomeSegTrack.dataset.pos = mode === "new" ? "1" : "0";
+  if (mode === "new") {
+    els.welcomeTitle.innerHTML = "Open a <em>file.</em>";
+    els.welcomeSub.textContent = "Tell us your name and we'll email a magic link.";
+    if (els.welcomeNameField) els.welcomeNameField.hidden = false;
+  } else {
+    els.welcomeTitle.innerHTML = "Welcome <em>back.</em>";
+    els.welcomeSub.textContent = "Sign in to sync across your devices.";
+    if (els.welcomeNameField) els.welcomeNameField.hidden = true;
+  }
+  setWelcomeStatus("", null);
+}
+
+function setWelcomeStatus(text, state) {
+  if (!els.welcomeStatus) return;
+  els.welcomeStatus.textContent = text || "";
+  if (state) {
+    els.welcomeStatus.setAttribute("data-state", state);
+  } else {
+    els.welcomeStatus.removeAttribute("data-state");
+  }
+}
+
+async function handleWelcomeSubmit(event) {
+  event.preventDefault();
+  const auth = window.StudyPulseAuth;
+  if (!auth || !auth.client) {
+    setWelcomeStatus("Auth isn't configured. You can keep using the app locally.", "error");
+    return;
+  }
+  const email = (els.welcomeEmail.value || "").trim().toLowerCase();
+  const name = (els.welcomeName.value || "").trim();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    setWelcomeStatus("That doesn't look like an email.", "error");
+    return;
+  }
+  const submitBtn = els.welcomeForm.querySelector(".welcome-submit");
+  submitBtn.setAttribute("data-busy", "true");
+  submitBtn.disabled = true;
+  setWelcomeStatus("Sending magic link…", null);
+  if (name) localStorage.setItem(PENDING_NAME_KEY, name);
+  const { error } = await auth.sendMagicLink(email);
+  submitBtn.removeAttribute("data-busy");
+  submitBtn.disabled = false;
+  if (error) {
+    setWelcomeStatus(error.message || "Couldn't send the link. Try again.", "error");
+    return;
+  }
+  setWelcomeStatus(`Check ${email} — click the link to sign in.`, "success");
+  if (els.welcomeSubmitLabel) els.welcomeSubmitLabel.textContent = "Resend magic link";
+}
+
+// =====================================================================
+// SYNC — bridges local state with Supabase via window.StudyPulseDb
+// =====================================================================
+let syncInitialized = false;
+
+function bindSync() {
+  const db = window.StudyPulseDb;
+  const auth = window.StudyPulseAuth;
+  if (!db || !auth) return;
+  bindAccountSurface();
+  auth.onChange(async (event, session) => {
+    renderAccountSurface(session);
+    if (session?.user && !syncInitialized) {
+      syncInitialized = true;
+      await initialSync();
+      db.subscribeRealtime({
+        vocab: handleRemoteVocabChange,
+        task: handleRemoteTaskChange,
+        completion: handleRemoteCompletionChange,
+        grammar: handleRemoteGrammarChange,
+        media: handleRemoteMediaChange,
+        session: handleRemoteSessionChange
+      });
+    } else if (event === "SIGNED_OUT") {
+      syncInitialized = false;
+      db.teardownRealtime();
     }
-    localStorage.setItem(WELCOME_KEY, "true");
-    els.welcome.hidden = true;
-    document.body.style.overflow = "";
   });
+  if (db.onVocabStamped) {
+    db.onVocabStamped((stampMap) => {
+      let touched = false;
+      state.vocab.forEach((w) => {
+        if (stampMap.has(w.id)) {
+          w.serverUpdatedAt = stampMap.get(w.id);
+          touched = true;
+        }
+      });
+      if (touched) saveState();
+    });
+  }
+}
+
+function mergeById(local, remote) {
+  const map = new Map(local.map((x) => [x.id, x]));
+  remote.forEach((rw) => {
+    const existing = map.get(rw.id);
+    const localStamp = existing?.serverUpdatedAt || "";
+    const remoteStamp = rw.serverUpdatedAt || "";
+    if (!existing || remoteStamp >= localStamp) {
+      map.set(rw.id, rw);
+    }
+  });
+  return Array.from(map.values());
+}
+
+async function initialSync() {
+  const db = window.StudyPulseDb;
+  if (!db?.isActive?.()) return;
+  // Push everything local-only to server (idempotent upserts).
+  if (state.vocab.length) await db.pushVocab(state.vocab);
+  if (state.tasks.length) await db.pushTasks(state.tasks);
+  if (state.grammar.length) await db.pushGrammar(state.grammar);
+  if (state.mediaLogs.length) await db.pushMedia(state.mediaLogs);
+  // Push existing completions
+  Object.entries(state.completions || {}).forEach(([day, byTask]) => {
+    Object.entries(byTask || {}).forEach(([taskId, done]) => {
+      if (done) db.pushCompletion(taskId, day, true);
+    });
+  });
+  Object.values(reviewSessions).forEach((s) => db.pushReviewSession(s));
+
+  // Pull server state and merge.
+  const [remoteWords, remoteTasks, remoteGrammar, remoteMedia, remoteCompletions, remoteSessions] = await Promise.all([
+    db.pullVocab(),
+    db.pullTasks(),
+    db.pullGrammar(),
+    db.pullMedia(),
+    db.pullCompletions(),
+    db.pullReviewSessions()
+  ]);
+  state.vocab = mergeById(state.vocab, remoteWords);
+  state.tasks = mergeById(state.tasks, remoteTasks);
+  state.grammar = mergeById(state.grammar, remoteGrammar);
+  state.mediaLogs = mergeById(state.mediaLogs, remoteMedia);
+
+  // Completions: union local + remote (both indicate "done").
+  Object.entries(remoteCompletions).forEach(([day, byTask]) => {
+    state.completions[day] = state.completions[day] || {};
+    Object.entries(byTask).forEach(([taskId, done]) => {
+      if (done) state.completions[day][taskId] = true;
+    });
+  });
+
+  // Review sessions per folder
+  Object.entries(remoteSessions).forEach(([folder, sess]) => {
+    reviewSessions[folder] = sess;
+  });
+
+  // Fetch profile and apply.
+  const profile = await db.fetchProfile();
+  if (profile) {
+    state.profile = state.profile || {};
+    if (profile.display_name) state.profile.displayName = profile.display_name;
+    if (profile.palette && PALETTES.includes(profile.palette)) {
+      applyPalette(profile.palette);
+      const grid = document.querySelector("#palette-grid");
+      if (grid) {
+        grid.querySelectorAll(".palette-card").forEach((c) => {
+          c.setAttribute("data-active", String(c.dataset.palette === profile.palette));
+        });
+      }
+    }
+  }
+  saveAndRender();
+}
+
+function handleRemoteVocabChange(change) {
+  if (change.kind === "delete") {
+    state.vocab = state.vocab.filter((w) => w.id !== change.id);
+  } else if (change.kind === "upsert") {
+    const rw = change.word;
+    const idx = state.vocab.findIndex((w) => w.id === rw.id);
+    if (idx >= 0) {
+      const local = state.vocab[idx];
+      if ((rw.serverUpdatedAt || "") < (local.serverUpdatedAt || "")) return;
+      state.vocab[idx] = rw;
+    } else {
+      state.vocab.push(rw);
+    }
+  }
+  saveAndRender();
+}
+
+function handleRemoteTaskChange(change) {
+  if (change.kind === "delete") {
+    state.tasks = state.tasks.filter((t) => t.id !== change.id);
+  } else if (change.kind === "upsert") {
+    const rt = change.task;
+    const idx = state.tasks.findIndex((t) => t.id === rt.id);
+    if (idx >= 0) {
+      const local = state.tasks[idx];
+      if ((rt.serverUpdatedAt || "") < (local.serverUpdatedAt || "")) return;
+      // Preserve local pinned flag if server didn't set it (e.g. older device)
+      state.tasks[idx] = { ...local, ...rt };
+    } else {
+      state.tasks.push(rt);
+    }
+  }
+  saveAndRender();
+}
+
+function handleRemoteCompletionChange(change) {
+  const { taskId, day } = change;
+  if (change.kind === "delete" || !change.done) {
+    if (state.completions[day]) {
+      delete state.completions[day][taskId];
+      if (!Object.keys(state.completions[day]).length) delete state.completions[day];
+    }
+  } else {
+    state.completions[day] = state.completions[day] || {};
+    state.completions[day][taskId] = true;
+  }
+  saveAndRender();
+}
+
+function handleRemoteGrammarChange(change) {
+  if (change.kind === "delete") {
+    state.grammar = state.grammar.filter((d) => d.id !== change.id);
+  } else if (change.kind === "upsert") {
+    const rd = change.drill;
+    const idx = state.grammar.findIndex((d) => d.id === rd.id);
+    if (idx >= 0) {
+      const local = state.grammar[idx];
+      if ((rd.serverUpdatedAt || "") < (local.serverUpdatedAt || "")) return;
+      state.grammar[idx] = rd;
+    } else {
+      state.grammar.push(rd);
+    }
+  }
+  saveAndRender();
+}
+
+function handleRemoteMediaChange(change) {
+  if (change.kind === "delete") {
+    state.mediaLogs = state.mediaLogs.filter((m) => m.id !== change.id);
+  } else if (change.kind === "upsert") {
+    const rm = change.log;
+    const idx = state.mediaLogs.findIndex((m) => m.id === rm.id);
+    if (idx >= 0) {
+      const local = state.mediaLogs[idx];
+      if ((rm.serverUpdatedAt || "") < (local.serverUpdatedAt || "")) return;
+      state.mediaLogs[idx] = rm;
+    } else {
+      state.mediaLogs.unshift(rm);
+    }
+  }
+  saveAndRender();
+}
+
+function handleRemoteSessionChange(change) {
+  if (change.kind === "delete") {
+    delete reviewSessions[change.folder];
+    if (reviewSession?.folder === change.folder) reviewSession = getReviewSession(change.folder);
+  } else if (change.kind === "upsert") {
+    reviewSessions[change.folder] = change.session;
+    if (reviewSession?.folder === change.folder) reviewSession = reviewSessions[change.folder];
+  }
+  renderFlashcard();
+}
+
+function bindAccountSurface() {
+  const signOutBtn = document.querySelector("#account-action");
+  const showWelcomeBtn = document.querySelector("#account-show-welcome");
+  if (signOutBtn) {
+    signOutBtn.addEventListener("click", async () => {
+      await window.StudyPulseAuth?.signOut?.();
+    });
+  }
+  if (showWelcomeBtn) {
+    showWelcomeBtn.addEventListener("click", () => {
+      showWelcome();
+    });
+  }
+  renderAccountSurface(window.StudyPulseAuth?.getSession?.());
+}
+
+function renderAccountSurface(session) {
+  const title = document.querySelector("#account-title");
+  const detail = document.querySelector("#account-detail");
+  const signOutBtn = document.querySelector("#account-action");
+  const signInRow = document.querySelector("#account-signin-row");
+  if (!title) return;
+  if (session?.user) {
+    const name = state.profile?.displayName || session.user.email || "Signed in";
+    title.textContent = `Signed in as ${name}`;
+    detail.textContent = `${session.user.email} — your data is syncing across devices.`;
+    if (signOutBtn) signOutBtn.hidden = false;
+    if (signInRow) signInRow.hidden = true;
+  } else {
+    title.textContent = "Local-only";
+    detail.textContent = "Sign in to back up your data and sync across devices. Your data is currently saved only on this device.";
+    if (signOutBtn) signOutBtn.hidden = true;
+    if (signInRow) signInRow.hidden = false;
+  }
+}
+
+// Convenience push helpers used by mutation entry points.
+function syncVocabUpsert(words) {
+  const list = Array.isArray(words) ? words : [words];
+  if (!list.length) return;
+  window.StudyPulseDb?.pushVocab?.(list);
+}
+function syncVocabDelete(ids) {
+  const list = Array.isArray(ids) ? ids : [ids];
+  if (!list.length) return;
+  window.StudyPulseDb?.softDeleteVocab?.(list);
+}
+function syncTaskUpsert(tasks) {
+  const list = Array.isArray(tasks) ? tasks : [tasks];
+  if (!list.length) return;
+  window.StudyPulseDb?.pushTasks?.(list);
+}
+function syncTaskDelete(ids) {
+  const list = Array.isArray(ids) ? ids : [ids];
+  if (!list.length) return;
+  window.StudyPulseDb?.softDeleteTasks?.(list);
+}
+function syncCompletion(taskId, day, done) {
+  window.StudyPulseDb?.pushCompletion?.(taskId, day, done);
+}
+function syncGrammarUpsert(items) {
+  const list = Array.isArray(items) ? items : [items];
+  if (!list.length) return;
+  window.StudyPulseDb?.pushGrammar?.(list);
+}
+function syncGrammarDelete(ids) {
+  const list = Array.isArray(ids) ? ids : [ids];
+  if (!list.length) return;
+  window.StudyPulseDb?.softDeleteGrammar?.(list);
+}
+function syncMediaUpsert(items) {
+  const list = Array.isArray(items) ? items : [items];
+  if (!list.length) return;
+  window.StudyPulseDb?.pushMedia?.(list);
+}
+function syncReviewSession(session) {
+  if (!session) return;
+  window.StudyPulseDb?.pushReviewSession?.(session);
+}
+function syncReviewSessionDelete(folder) {
+  if (!folder) return;
+  window.StudyPulseDb?.deleteReviewSession?.(folder);
+}
+
+async function claimPendingName(user) {
+  const auth = window.StudyPulseAuth;
+  if (!auth?.client) return;
+  const name = localStorage.getItem(PENDING_NAME_KEY);
+  if (!name) return;
+  await auth.client
+    .from("profiles")
+    .update({ display_name: name })
+    .eq("id", user.id);
+  localStorage.removeItem(PENDING_NAME_KEY);
+  state.profile = state.profile || {};
+  state.profile.displayName = name;
+  saveState();
 }
 
 const WELCOME_WORDS = ["vocabulary.", "grammar.", "fluency.", "listening.", "reading."];
@@ -417,14 +813,16 @@ function bindForms() {
   document.querySelector("#task-form").addEventListener("submit", (event) => {
     event.preventDefault();
     const data = Object.fromEntries(new FormData(event.currentTarget));
-    state.tasks.push({
+    const task = {
       id: crypto.randomUUID(),
       title: data.title.trim(),
       type: data.type,
       time: data.time,
       duration: Number(data.duration),
       notes: data.notes.trim()
-    });
+    };
+    state.tasks.push(task);
+    syncTaskUpsert([task]);
     event.currentTarget.reset();
     event.currentTarget.time.value = "09:00";
     event.currentTarget.duration.value = "60";
@@ -434,7 +832,9 @@ function bindForms() {
   document.querySelector("#vocab-form").addEventListener("submit", (event) => {
     event.preventDefault();
     const data = Object.fromEntries(new FormData(event.currentTarget));
-    state.vocab.push(createVocabEntry(data));
+    const entry = createVocabEntry(data);
+    state.vocab.push(entry);
+    syncVocabUpsert([entry]);
     event.currentTarget.reset();
     setDefaultDates();
     saveAndRender();
@@ -443,7 +843,7 @@ function bindForms() {
   document.querySelector("#grammar-form").addEventListener("submit", (event) => {
     event.preventDefault();
     const data = Object.fromEntries(new FormData(event.currentTarget));
-    state.grammar.push({
+    const drill = {
       id: crypto.randomUUID(),
       book: data.book.trim(),
       unit: data.unit.trim(),
@@ -451,7 +851,9 @@ function bindForms() {
       due: data.due || todayKey(),
       notes: data.notes.trim(),
       done: false
-    });
+    };
+    state.grammar.push(drill);
+    syncGrammarUpsert([drill]);
     event.currentTarget.reset();
     event.currentTarget.book.value = "Grammatik Aktiv";
     setDefaultDates();
@@ -461,14 +863,16 @@ function bindForms() {
   document.querySelector("#media-form").addEventListener("submit", (event) => {
     event.preventDefault();
     const data = Object.fromEntries(new FormData(event.currentTarget));
-    state.mediaLogs.unshift({
+    const log = {
       id: crypto.randomUUID(),
       type: data.type,
       minutes: Number(data.minutes),
       title: data.title.trim(),
       notes: data.notes.trim(),
       date: todayKey()
-    });
+    };
+    state.mediaLogs.unshift(log);
+    syncMediaUpsert([log]);
     event.currentTarget.reset();
     event.currentTarget.minutes.value = "30";
     saveAndRender();
@@ -999,33 +1403,42 @@ function toggleTaskDone(id) {
   const today = todayKey();
   state.completions[today] ||= {};
   state.completions[today][id] = !state.completions[today][id];
-  if (!state.completions[today][id]) delete state.completions[today][id];
+  const done = Boolean(state.completions[today][id]);
+  if (!done) delete state.completions[today][id];
+  syncCompletion(id, today, done);
   saveAndRender();
 }
 
 function deleteTask(id) {
   const task = state.tasks.find((t) => t.id === id);
   if (!task || task.pinned) return;
+  syncTaskDelete([id]);
   state.tasks = state.tasks.filter((t) => t.id !== id);
   Object.values(state.completions).forEach((day) => delete day[id]);
   saveAndRender();
 }
 
 function deleteWord(id) {
+  syncVocabDelete([id]);
   state.vocab = state.vocab.filter((word) => word.id !== id);
   if (activeReviewId === id) activeReviewId = null;
   saveAndRender();
 }
 
 function deleteGrammar(id) {
+  syncGrammarDelete([id]);
   state.grammar = state.grammar.filter((drill) => drill.id !== id);
   saveAndRender();
 }
 
 function toggleGrammar(id) {
-  state.grammar = state.grammar.map((drill) => (
-    drill.id === id ? { ...drill, done: !drill.done } : drill
-  ));
+  let mutated = null;
+  state.grammar = state.grammar.map((drill) => {
+    if (drill.id !== id) return drill;
+    mutated = { ...drill, done: !drill.done };
+    return mutated;
+  });
+  if (mutated) syncGrammarUpsert([mutated]);
   saveAndRender();
 }
 
@@ -1039,6 +1452,8 @@ function gradeReview(grade) {
   const word = state.vocab.find((item) => item.id === activeReviewId);
   if (!word) return;
   scheduleWord(word, grade);
+  syncVocabUpsert([word]);
+  syncReviewSession(reviewSession);
   reviewSession.grades ||= { again: 0, hard: 0, good: 0, easy: 0 };
   reviewSession.wordGrades ||= {};
   const previousGrade = reviewSession.wordGrades[word.id];
@@ -1073,14 +1488,17 @@ function resetReviewFolderProgress() {
     word.repetitions = 0;
     word.lapses = 0;
     word.lastReviewed = null;
+    word.lastGrade = null;
     word.due = today;
   });
+  syncVocabUpsert(affected);
   saveState();
   startVocabReview(folder, { force: true });
 }
 
 function startVocabReview(folder = "all", { force = false } = {}) {
   if (force) {
+    syncReviewSessionDelete(folder);
     delete reviewSessions[folder];
   }
   reviewSession = getReviewSession(folder);
@@ -1256,6 +1674,7 @@ function importVocabFile(event) {
       }
 
       state.vocab.push(...entries);
+      syncVocabUpsert(entries);
       saveAndRender();
       alert(`${entries.length} word${entries.length === 1 ? "" : "s"} imported.`);
     } catch {
@@ -1413,10 +1832,24 @@ function normalizeState(value) {
     ...vocab.map((word) => word.folder || "General")
   ]);
   const tasks = Array.isArray(value.tasks) ? value.tasks.slice() : [];
+  const isUuid = (id) => typeof id === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
   let flashcardsTask = tasks.find((t) => t.id === "task-flashcards") ||
+                       tasks.find((t) => t.pinned && t.linkTab === "vocab") ||
                        tasks.find((t) => t.title === "Vocab review" || t.title === "Flashcards");
   if (flashcardsTask) {
-    flashcardsTask.id = "task-flashcards";
+    if (!isUuid(flashcardsTask.id)) {
+      const oldId = flashcardsTask.id;
+      flashcardsTask.id = crypto.randomUUID();
+      // Carry over any completions stored against the old non-UUID id.
+      if (value.completions && typeof value.completions === "object") {
+        Object.values(value.completions).forEach((day) => {
+          if (day && typeof day === "object" && day[oldId]) {
+            day[flashcardsTask.id] = day[oldId];
+            delete day[oldId];
+          }
+        });
+      }
+    }
     flashcardsTask.title = "Flashcards";
     flashcardsTask.linkTab = "vocab";
     flashcardsTask.pinned = true;
@@ -1425,7 +1858,7 @@ function normalizeState(value) {
     if (!flashcardsTask.time) flashcardsTask.time = "09:00";
   } else {
     tasks.unshift({
-      id: "task-flashcards",
+      id: crypto.randomUUID(),
       title: "Flashcards",
       type: "Vocabulary",
       time: "09:00",
@@ -1435,6 +1868,21 @@ function normalizeState(value) {
       pinned: true
     });
   }
+  // Ensure every task has a UUID for server sync.
+  tasks.forEach((t) => {
+    if (!isUuid(t.id)) {
+      const oldId = t.id;
+      t.id = crypto.randomUUID();
+      if (value.completions && typeof value.completions === "object") {
+        Object.values(value.completions).forEach((day) => {
+          if (day && typeof day === "object" && day[oldId]) {
+            day[t.id] = day[oldId];
+            delete day[oldId];
+          }
+        });
+      }
+    }
+  });
   return {
     tasks,
     vocab,

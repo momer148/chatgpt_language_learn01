@@ -1,9 +1,12 @@
-const CACHE_NAME = "study-pulse-v15";
+const CACHE_NAME = "study-pulse-v19";
 const ASSETS = [
   "./",
   "index.html",
   "styles.css",
   "app.js",
+  "config.js",
+  "auth.js",
+  "db.js",
   "xlsx.full.min.js",
   "manifest.webmanifest",
   "icon.svg"

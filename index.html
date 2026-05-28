@@ -60,23 +60,34 @@
               <button class="welcome-seg-btn" type="button" data-mode="new" data-active="false">New here</button>
             </div>
             <h2 class="welcome-form-title" id="welcome-title">Welcome <em>back.</em></h2>
-            <p class="welcome-form-sub" id="welcome-sub">Pick up where you left off.</p>
+            <p class="welcome-form-sub" id="welcome-sub">Sign in to sync across your devices.</p>
             <form id="welcome-form" class="welcome-fields" novalidate>
-              <label class="welcome-field">
+              <label class="welcome-field" id="welcome-name-field" hidden>
                 <div class="welcome-field-meta">
                   <span class="welcome-field-label">Display name</span>
-                  <span class="welcome-field-pill" id="welcome-name-pill">optional</span>
+                  <span class="welcome-field-pill">optional</span>
                 </div>
                 <div class="welcome-field-row">
                   <input type="text" id="welcome-name" autocomplete="given-name" placeholder="Hadley" spellcheck="false">
                 </div>
               </label>
+              <label class="welcome-field">
+                <div class="welcome-field-meta">
+                  <span class="welcome-field-label">Email</span>
+                  <span class="welcome-field-pill">magic link</span>
+                </div>
+                <div class="welcome-field-row">
+                  <input type="email" id="welcome-email" autocomplete="email" placeholder="you@studio.com" spellcheck="false" required>
+                </div>
+              </label>
+              <div class="welcome-field-status" id="welcome-status" aria-live="polite"></div>
               <button class="welcome-submit primary-button no-arrow" type="submit">
-                <span>Enter</span>
+                <span id="welcome-submit-label">Send magic link</span>
                 <span class="welcome-submit-arrow">→</span>
               </button>
             </form>
-            <div class="welcome-card-footer">No account. Your data stays on this device.</div>
+            <button class="welcome-skip" type="button" id="welcome-skip">Continue without signing in</button>
+            <div class="welcome-card-footer">Sign in to back up and sync. Or use locally and sign in later.</div>
           </div>
         </section>
       </div>
@@ -473,6 +484,21 @@
         </section>
 
         <section class="panel" id="settings-panel" data-panel="settings">
+          <section class="surface" id="account-surface">
+            <div class="section-head">
+              <div>
+                <p class="eyebrow">Account</p>
+                <h3 id="account-title">Local-only</h3>
+              </div>
+              <button class="secondary-button" id="account-action" type="button" hidden>Sign out</button>
+            </div>
+            <p class="body-copy" id="account-detail">
+              Sign in from the welcome screen to sync your data across devices. Your data is currently saved only on this device.
+            </p>
+            <div id="account-signin-row" class="button-row" hidden>
+              <button class="primary-button no-arrow" id="account-show-welcome" type="button">Sign in to sync</button>
+            </div>
+          </section>
           <section class="surface palette-surface">
             <div class="section-head">
               <div>
@@ -566,6 +592,10 @@
     </template>
 
     <script src="xlsx.full.min.js" defer></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js" defer></script>
+    <script src="config.js" defer></script>
+    <script src="auth.js" defer></script>
+    <script src="db.js" defer></script>
     <script src="app.js" defer></script>
   </body>
 </html>
