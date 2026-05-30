@@ -30,6 +30,29 @@ const SEED_TASK_IDS = {
   listening: "00000000-0000-4000-8000-000000000004"
 };
 
+// Stable IDs for the seeded sample vocab, keyed by the (lower-cased) word.
+// Same rationale as SEED_TASK_IDS: without these, each install seeds the same
+// 15 sample words under fresh crypto.randomUUID() ids, and the Supabase sync
+// (onConflict: "id") multiplies them once per device — inflating "words due".
+// dedupeSampleVocab() collapses copies created before this fix.
+const SAMPLE_VOCAB_IDS = {
+  "die entscheidung": "00000000-0000-4000-9000-000000000001",
+  "die voraussetzung": "00000000-0000-4000-9000-000000000002",
+  "die herausforderung": "00000000-0000-4000-9000-000000000003",
+  "die gelegenheit": "00000000-0000-4000-9000-000000000004",
+  "der unterschied": "00000000-0000-4000-9000-000000000005",
+  "sich bewerben": "00000000-0000-4000-9000-000000000006",
+  "vereinbaren": "00000000-0000-4000-9000-000000000007",
+  "verschieben": "00000000-0000-4000-9000-000000000008",
+  "teilnehmen": "00000000-0000-4000-9000-000000000009",
+  "vermeiden": "00000000-0000-4000-9000-00000000000a",
+  "zuverlaessig": "00000000-0000-4000-9000-00000000000b",
+  "ausfuehrlich": "00000000-0000-4000-9000-00000000000c",
+  "trotzdem": "00000000-0000-4000-9000-00000000000d",
+  "deshalb": "00000000-0000-4000-9000-00000000000e",
+  "waehrend": "00000000-0000-4000-9000-00000000000f"
+};
+
 const defaultState = {
   tasks: [
     {
@@ -122,7 +145,7 @@ function sampleVocabWords() {
 
 function sampleVocabWord(word, meaning, sentence, folder, topic) {
   return {
-    id: crypto.randomUUID(),
+    id: SAMPLE_VOCAB_IDS[word.toLowerCase()] || crypto.randomUUID(),
     word,
     meaning,
     sentence,
@@ -555,6 +578,14 @@ async function initialSync() {
     db.pullReviewSessions()
   ]);
   state.vocab = mergeById(state.vocab, remoteWords);
+  // Collapse duplicate sample vocab pushed under random ids by older builds,
+  // then reconcile the server (push canonical survivors, soft-delete the rest).
+  const vocabDedup = dedupeSampleVocab(state.vocab);
+  state.vocab = vocabDedup.vocab;
+  if (vocabDedup.removedIds.length) {
+    await db.pushVocab(state.vocab);
+    await db.softDeleteVocab(vocabDedup.removedIds);
+  }
   state.tasks = mergeById(state.tasks, remoteTasks);
   // Collapse duplicate seed tasks that older builds pushed under random ids,
   // then reconcile the server: push the canonical survivors and soft-delete the
@@ -1849,6 +1880,7 @@ function normalizeState(value) {
       }
     });
   }
+  dedupeSampleVocab(vocab);
   const folderNames = new Set([
     ...(Array.isArray(value.vocabFolders) ? value.vocabFolders.map((folder) => folder.name) : []),
     ...vocab.map((word) => word.folder || "General")
@@ -1986,6 +2018,49 @@ function dedupeSeedTasks(tasks, completions) {
   const survivingIds = new Set(tasks.map((t) => t.id));
   const uniqueRemoved = [...new Set(removedIds)].filter((id) => !survivingIds.has(id));
   return { tasks, removedIds: uniqueRemoved };
+}
+
+// Collapse duplicated seeded sample vocab down to a single canonical row per
+// word — the vocab counterpart of dedupeSeedTasks(). Older builds seeded the 15
+// sample words with crypto.randomUUID(), so each device pushed its own copies
+// and the account accumulated duplicates that all show as "due today".
+//
+// Matched strictly by the known sample-word text (the `sample` flag is NOT
+// stored server-side, so copies pulled from other devices have lost it). The
+// survivor is the copy with the most spaced-repetition progress, so review
+// history is preserved and the duplicate fresh copies (which inflate the due
+// count) are the ones dropped. User-added words are never touched. Returns
+// { vocab, removedIds }; idempotent.
+function dedupeSampleVocab(vocab) {
+  const removedIds = [];
+  Object.entries(SAMPLE_VOCAB_IDS).forEach(([wordKey, canonicalId]) => {
+    const matches = vocab.filter((w) => String(w.word || "").trim().toLowerCase() === wordKey);
+    if (matches.length < 2 && (!matches[0] || matches[0].id === canonicalId)) return;
+    // Keep the most-progressed copy (most reps, then longest interval, then most
+    // recently reviewed, then furthest-out due date), preferring the canonical id.
+    const survivor = matches.slice().sort((a, b) => {
+      if ((a.id === canonicalId) !== (b.id === canonicalId)) return a.id === canonicalId ? -1 : 1;
+      if ((b.repetitions || 0) !== (a.repetitions || 0)) return (b.repetitions || 0) - (a.repetitions || 0);
+      if ((b.interval || 0) !== (a.interval || 0)) return (b.interval || 0) - (a.interval || 0);
+      const al = a.lastReviewed || "";
+      const bl = b.lastReviewed || "";
+      if (al !== bl) return al > bl ? -1 : 1;
+      const ad = a.due || "";
+      const bd = b.due || "";
+      if (ad !== bd) return ad > bd ? -1 : 1;
+      return 0;
+    })[0];
+    matches.forEach((m) => {
+      if (m.id !== canonicalId) removedIds.push(m.id);
+    });
+    survivor.id = canonicalId;
+    for (let i = vocab.length - 1; i >= 0; i--) {
+      if (matches.includes(vocab[i]) && vocab[i] !== survivor) vocab.splice(i, 1);
+    }
+  });
+  const survivingIds = new Set(vocab.map((w) => w.id));
+  const uniqueRemoved = [...new Set(removedIds)].filter((id) => !survivingIds.has(id));
+  return { vocab, removedIds: uniqueRemoved };
 }
 
 function normalizeVocabWord(word) {
