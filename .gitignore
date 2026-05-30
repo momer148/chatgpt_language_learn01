@@ -1,0 +1,12 @@
+# macOS
+.DS_Store
+
+# Node / Capacitor (added when we scaffold mobile)
+node_modules/
+dist/
+.env
+.env.local
+
+# Editor
+.vscode/
+.idea/
