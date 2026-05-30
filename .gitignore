@@ -1,11 +1,21 @@
 # macOS
 .DS_Store
 
-# Node / Capacitor (added when we scaffold mobile)
+# Node / Capacitor
 node_modules/
 dist/
 .env
 .env.local
+
+# Generated web-asset staging folder (rebuilt by `npm run copy:web`).
+# The native projects keep their own committed copy under android/ios.
+www/
+
+# Native build artifacts (the native project folders themselves ARE committed;
+# their own nested .gitignore files exclude the heavy build outputs).
+ios/App/Pods/
+ios/App/build/
+.gradle/
 
 # Editor
 .vscode/

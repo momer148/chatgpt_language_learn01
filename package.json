@@ -1,0 +1,24 @@
+{
+  "name": "chatgpt_language_learn01",
+  "version": "1.0.0",
+  "description": "Study Pulse is a local-first language study planner for daily vocabulary, grammar, reading, and listening routines.",
+  "main": "app.js",
+  "scripts": {
+    "copy:web": "node scripts/copy-web.mjs",
+    "sync": "npm run copy:web && cap sync",
+    "open:ios": "cap open ios",
+    "open:android": "cap open android",
+    "serve": "node scripts/serve.mjs"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@capacitor/android": "^7.6.5",
+    "@capacitor/core": "^7.6.5",
+    "@capacitor/ios": "^7.6.5"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^7.6.5"
+  }
+}
