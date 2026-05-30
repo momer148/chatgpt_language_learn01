@@ -17,10 +17,23 @@ function applyPalette(name) {
 applyPalette(loadPalette());
 const MS_PER_DAY = 86400000;
 
+// Stable, deterministic IDs for the default study blocks. These MUST be
+// constant (not crypto.randomUUID()) so the same logical seed task maps to the
+// same row on every device/install. Otherwise each install re-seeds the same
+// blocks under fresh IDs and the Supabase sync (which de-dupes only by `id`)
+// accumulates a duplicate per device. See dedupeSeedTasks() for the cleanup of
+// rows created before this fix.
+const SEED_TASK_IDS = {
+  flashcards: "00000000-0000-4000-8000-000000000001",
+  grammar: "00000000-0000-4000-8000-000000000002",
+  reading: "00000000-0000-4000-8000-000000000003",
+  listening: "00000000-0000-4000-8000-000000000004"
+};
+
 const defaultState = {
   tasks: [
     {
-      id: crypto.randomUUID(),
+      id: SEED_TASK_IDS.flashcards,
       title: "Flashcards",
       type: "Vocabulary",
       time: "09:00",
@@ -30,7 +43,7 @@ const defaultState = {
       pinned: true
     },
     {
-      id: crypto.randomUUID(),
+      id: SEED_TASK_IDS.grammar,
       title: "Grammar drilling",
       type: "Grammar",
       time: "10:30",
@@ -38,7 +51,7 @@ const defaultState = {
       notes: "Work through your current Grammatik Aktiv unit."
     },
     {
-      id: crypto.randomUUID(),
+      id: SEED_TASK_IDS.reading,
       title: "Reading block",
       type: "Reading",
       time: "15:00",
@@ -46,7 +59,7 @@ const defaultState = {
       notes: "Read one article or chapter and collect useful phrases."
     },
     {
-      id: crypto.randomUUID(),
+      id: SEED_TASK_IDS.listening,
       title: "Listening block",
       type: "Listening",
       time: "18:30",
@@ -543,6 +556,15 @@ async function initialSync() {
   ]);
   state.vocab = mergeById(state.vocab, remoteWords);
   state.tasks = mergeById(state.tasks, remoteTasks);
+  // Collapse duplicate seed tasks that older builds pushed under random ids,
+  // then reconcile the server: push the canonical survivors and soft-delete the
+  // obsolete rows so they don't sync back to any device.
+  const taskDedup = dedupeSeedTasks(state.tasks, state.completions);
+  state.tasks = taskDedup.tasks;
+  if (taskDedup.removedIds.length) {
+    await db.pushTasks(state.tasks);
+    await db.softDeleteTasks(taskDedup.removedIds);
+  }
   state.grammar = mergeById(state.grammar, remoteGrammar);
   state.mediaLogs = mergeById(state.mediaLogs, remoteMedia);
 
@@ -1858,7 +1880,7 @@ function normalizeState(value) {
     if (!flashcardsTask.time) flashcardsTask.time = "09:00";
   } else {
     tasks.unshift({
-      id: crypto.randomUUID(),
+      id: SEED_TASK_IDS.flashcards,
       title: "Flashcards",
       type: "Vocabulary",
       time: "09:00",
@@ -1883,6 +1905,7 @@ function normalizeState(value) {
       }
     }
   });
+  dedupeSeedTasks(tasks, value.completions);
   return {
     tasks,
     vocab,
@@ -1894,6 +1917,75 @@ function normalizeState(value) {
     sampleVocabSeeded: true,
     sampleVocabVersion: 2
   };
+}
+
+// Title signatures (lower-cased) that identify each default seed block,
+// including historical titles so blocks seeded by older versions still match.
+const SEED_TASK_SIGNATURES = [
+  { id: SEED_TASK_IDS.flashcards, titles: ["flashcards", "vocab review"] },
+  { id: SEED_TASK_IDS.grammar, titles: ["grammar drilling"] },
+  { id: SEED_TASK_IDS.reading, titles: ["reading block"] },
+  { id: SEED_TASK_IDS.listening, titles: ["listening block"] }
+];
+
+// Collapse duplicated default seed tasks down to a single canonical row.
+//
+// Older builds seeded the default blocks with crypto.randomUUID(), so each
+// device/install pushed the same logical block under a different id and the
+// server (which de-dupes only by `id`) ended up with one copy per device. This
+// folds every matching copy onto the fixed SEED_TASK_IDS id, remaps any
+// completion history onto the survivor, and returns the obsolete ids so the
+// caller can soft-delete those rows from Supabase. Safe to run repeatedly: once
+// collapsed there is nothing left to do. Only the known default blocks are
+// touched — user-created tasks (real random UUIDs) are never merged.
+function dedupeSeedTasks(tasks, completions) {
+  const removedIds = [];
+  const remapCompletions = (fromId, toId) => {
+    if (fromId === toId || !completions || typeof completions !== "object") return;
+    Object.values(completions).forEach((day) => {
+      if (day && typeof day === "object" && day[fromId]) {
+        day[toId] = day[toId] || day[fromId];
+        delete day[fromId];
+      }
+    });
+  };
+  SEED_TASK_SIGNATURES.forEach((sig) => {
+    const matches = tasks.filter((t) =>
+      sig.titles.includes(String(t.title || "").trim().toLowerCase()));
+    if (!matches.length) return;
+    // Prefer the row already on the canonical id, then a pinned one, then the
+    // most recently synced, then the copy with the richest notes.
+    const survivor = matches.slice().sort((a, b) => {
+      if ((a.id === sig.id) !== (b.id === sig.id)) return a.id === sig.id ? -1 : 1;
+      if (Boolean(a.pinned) !== Boolean(b.pinned)) return a.pinned ? -1 : 1;
+      const at = a.serverUpdatedAt || "";
+      const bt = b.serverUpdatedAt || "";
+      if (at !== bt) return at > bt ? -1 : 1;
+      return String(b.notes || "").length - String(a.notes || "").length;
+    })[0];
+    // Salvage anything useful from the copies we are about to drop.
+    matches.forEach((m) => {
+      if (m === survivor) return;
+      if (!survivor.notes && m.notes) survivor.notes = m.notes;
+      if (!survivor.linkTab && m.linkTab) survivor.linkTab = m.linkTab;
+      if (m.pinned) survivor.pinned = true;
+    });
+    // Every original id that is not the canonical id becomes obsolete.
+    matches.forEach((m) => {
+      if (m.id !== sig.id) {
+        remapCompletions(m.id, sig.id);
+        removedIds.push(m.id);
+      }
+    });
+    survivor.id = sig.id;
+    // Remove the non-survivors from the task list in place.
+    for (let i = tasks.length - 1; i >= 0; i--) {
+      if (matches.includes(tasks[i]) && tasks[i] !== survivor) tasks.splice(i, 1);
+    }
+  });
+  const survivingIds = new Set(tasks.map((t) => t.id));
+  const uniqueRemoved = [...new Set(removedIds)].filter((id) => !survivingIds.has(id));
+  return { tasks, removedIds: uniqueRemoved };
 }
 
 function normalizeVocabWord(word) {
